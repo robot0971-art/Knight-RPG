@@ -52,9 +52,11 @@ public sealed class AutoBattleController : MonoBehaviour, ISkillTargetProvider, 
     private MonsterData currentMonsterData;
     private AutoBattleUnit subscribedAttackHitPlayer;
     private float playerAttackTimer;
+    private float enemyAttackTimer;
     private float enemyRespawnTimer;
     private bool isFighting;
     private bool isAttackResolving;
+    private bool isEnemyAttackResolving;
     private bool playerAttackEventReceived;
     private bool isEnemyDefeatHandled;
     private bool pendingBossSpawn;
@@ -256,12 +258,15 @@ public sealed class AutoBattleController : MonoBehaviour, ISkillTargetProvider, 
         isFighting = true;
         SetBackgroundScrolling(false);
         playerAttackTimer = 0f;
+        enemyAttackTimer = 0f;
         StartCoroutine(ResolvePlayerAttack());
         Log($"Battle started. distance={distance:F2}, range={attackRange}, enemy={currentEnemy.UnitName}, hp={currentEnemy.CurrentHealth}");
     }
 
     private void HandleFight()
     {
+        HandleEnemyAttack();
+
         if (isAttackResolving)
         {
             return;
@@ -277,6 +282,24 @@ public sealed class AutoBattleController : MonoBehaviour, ISkillTargetProvider, 
         playerAttackTimer = 0f;
         Log($"Attacking. enemy HP={currentEnemy.CurrentHealth}");
         StartCoroutine(ResolvePlayerAttack());
+    }
+
+    private void HandleEnemyAttack()
+    {
+        if (isEnemyAttackResolving || currentEnemy == null || currentEnemy.IsDead || player == null || player.IsDead)
+        {
+            return;
+        }
+
+        enemyAttackTimer += Time.deltaTime;
+        if (enemyAttackTimer < currentEnemy.AttackInterval)
+        {
+            currentEnemy.PlayAttack();
+            return;
+        }
+
+        enemyAttackTimer = 0f;
+        StartCoroutine(ResolveEnemyAttack());
     }
 
     private void BuildEnemyPools()
@@ -475,6 +498,31 @@ public sealed class AutoBattleController : MonoBehaviour, ISkillTargetProvider, 
         }
     }
 
+    private IEnumerator ResolveEnemyAttack()
+    {
+        if (currentEnemy == null || currentEnemy.IsDead || player == null || player.IsDead)
+        {
+            yield break;
+        }
+
+        isEnemyAttackResolving = true;
+        currentEnemy.RestartAttack();
+
+        if (attackImpactDelay > 0f)
+        {
+            yield return new WaitForSeconds(attackImpactDelay);
+        }
+
+        if (currentEnemy != null && !currentEnemy.IsDead && player != null && !player.IsDead)
+        {
+            AutoBattleUnit.DamageResult damageResult = currentEnemy.Attack(player);
+            effectService?.ShowDamage(player, damageResult);
+            effectService?.PlayImpactEffect(player.transform.position);
+        }
+
+        isEnemyAttackResolving = false;
+    }
+
     private void OnPlayerAttackHit(AutoBattleUnit attacker)
     {
         if (attacker != player || !isAttackResolving || playerAttackEventReceived)
@@ -663,7 +711,9 @@ public sealed class AutoBattleController : MonoBehaviour, ISkillTargetProvider, 
     {
         isFighting = false;
         isAttackResolving = false;
+        isEnemyAttackResolving = false;
         playerAttackTimer = 0f;
+        enemyAttackTimer = 0f;
         isEnemyDefeatHandled = false;
     }
 
@@ -688,6 +738,7 @@ public sealed class AutoBattleController : MonoBehaviour, ISkillTargetProvider, 
         }
 
         isAttackResolving = false;
+        isEnemyAttackResolving = false;
         if (playerSensor != null)
         {
             playerSensor.ClearTarget();
